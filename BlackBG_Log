@@ -1,0 +1,236 @@
+
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+
+<style type="text/css">
+
+body{
+background: rgba(0,0,0,0);
+}
+
+.wrapper {
+
+}
+.visualizer {
+display: block;
+margin: auto;
+}
+
+.mirWrapper {
+perspective: 2000px;
+perspective-origin: center top;
+}
+
+canvas.visMirror{
+    var context = null;
+    display: block;
+    position: relative;
+    top: -69px;
+    margin: auto;
+    -webkit-transform: scaleY(-0.5) rotateX(25deg);
+    -moz-transform: scaleY(-0.5) rotateX(25deg);
+    -ms-transform: scaleY(-0.5) rotateX(25deg);
+    transform: scaleY(-0.5) rotateX(-25deg);
+    -webkit-mask-image:-webkit-gradient(linear, left top, left bottom, color-stop(50%,rgba(0,0,0,0)), color-stop(75%,rgba(0,0,0,0.125)), color-stop(100%,rgba(0,0,0,0.5)));
+}
+</style>
+
+</head>
+<body>
+  <div class="wrapper">
+    <canvas class="visualizer" width="1500" height="350"></canvas> 
+  </div>
+  <div class="mirWrapper">
+    <canvas class="visMirror" width="1540" height="250"></canvas> 
+  </div>
+
+
+    <script>
+      // Variables to be adjusted by the user.
+      var bgColor   = 'rgba(0,0,0,0)';        // Background Color in RGBA. Set last number to 0 for transparent background.
+      var barGrad1  = 'rgba(255,255,255,1)';  // Bar Gradient Color #1 in RGBA. Low Volume Sounds will inherit this color.
+      var barGrad2  = 'rgba(192,192,192,1)';  // Bar Gradient Color #2 in RGBA. Mid Volume Sounds will inherit this color.
+      var barGrad3  = 'rgba(80,80,80,1)';  // Bar Gradient Color #3 in RGBA. High Volume Sounds will inherit this color.
+      var barCap    = 'rgba(255,255,255,1)';  // Bar Cap Color #1 in RGBA. 
+      var maxFreq   = 22050;                  // Specify the maximum frequency to be rendered by the visualizer in Hz. (default = 20000)
+      var TotalBars = 234;                    // Specify the total number of bars to be displayed by the visualizer. (default = 192)
+      var SPACING   = 2;                      // Specify the spacing (px) between bars. (defaul = 2)
+      var capHeight = 2;                      // Specify the height (px) of the falling peak caps. (default = 2)
+      var dBmax     = 0;                      // Specify maximum dB of visualizer. Increase this number if visualizer is clipping. (default = 0)
+      var dBmin     = -80;                    // Specify minimum dB of visualizer. Increase this number to remove peaks when no sound is present. (default = -80)
+      var FFT       = 2048;                   // Specify resolution of visualizer. Recommend at least 4 * TotalBars. Must be a power of 2. (default = 8192)
+
+      // fork getUserMedia for multiple browser versions, for those
+      // that need prefixes
+      navigator.getUserMedia = (navigator.getUserMedia ||
+                                navigator.webkitGetUserMedia ||
+                                navigator.mozGetUserMedia ||
+                                navigator.msGetUserMedia);
+
+      // set up forked web audio context, for multiple browsers
+      // window. is needed otherwise Safari explodes
+
+      var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            var source;
+      var stream;
+
+      //set up the different audio nodes we will use for the app
+
+      var analyser = audioCtx.createAnalyser();
+      analyser.smoothingTimeConstant = 0.85;
+
+      // set up canvas context for visualizer
+
+      var canvas = document.querySelector('.visualizer');
+      var canvasCtx = canvas.getContext("2d");
+      var mirror = document.querySelector('.visMirror');
+      var mirrorCtx = mirror.getContext("2d");
+
+      //main block for doing the audio recording
+
+      if (navigator.getUserMedia) {
+         console.log('getUserMedia supported.');
+         navigator.getUserMedia (
+            // constraints - only audio needed for this app
+            {
+                "audio": {
+                    "mandatory": {
+                        "googEchoCancellation": "false",
+                        "googAutoGainControl": "false",
+                        "googNoiseSuppression": "false",
+                        "googHighpassFilter": "false"
+                    },
+                    "optional": []
+                },
+            },
+
+            // Success callback
+            function gotStream(stream) {
+               var inputPoint = audioCtx.createGain();
+               source = audioCtx.createMediaStreamSource(stream);
+               var audioInput = source;
+               audioInput.connect(inputPoint);
+               inputPoint.connect(analyser);
+
+               analyser.fftSize = FFT;
+               analyser.minDecibels = dBmin;
+               analyser.maxDecibels = dBmax;
+
+               var zeroGain = audioCtx.createGain();
+               zeroGain.gain.value = 0.0;
+               inputPoint.connect( zeroGain );
+               zeroGain.connect( audioCtx.destination );
+
+               visualize();
+
+            },
+
+            // Error callback
+            function(err) {
+               console.log('The following gUM error occured: ' + err);
+            }
+         );
+      } else {
+         console.log('getUserMedia not supported on your browser!');
+      }
+
+      function uniq (a) {
+        var seen = new Set();
+        return a.filter(function(yy) {
+          return !seen.has(yy) && seen.add(yy);
+        })
+      }
+
+      function visualize() {
+        WIDTH = canvas.width;
+        HEIGHT = canvas.height;
+        mWIDTH = mirror.width;
+
+        {
+          var sRate = audioCtx.sampleRate;
+          var numBars = Math.round(TotalBars * sRate/2/maxFreq);
+          var barWidth = Math.round((WIDTH / (numBars*maxFreq*2/sRate)) + SPACING);
+          var bufferLength = analyser.frequencyBinCount;
+          var dataArray = new Uint8Array(bufferLength);
+          var multiplier = 1;
+          var capStyle = barCap;
+          var cheight = canvas.height - 2;
+          var capYPositionArray = []; ////store the vertical position of the caps from the previous frame
+          gradient = canvasCtx.createLinearGradient(0, 0, 0, 350);
+          gradient.addColorStop(0.5, barGrad3);
+          gradient.addColorStop(0.75, barGrad2);
+          gradient.addColorStop(1, barGrad1);
+
+          function draw() {
+            drawVisual = requestAnimationFrame(draw);
+
+            analyser.getByteFrequencyData(dataArray);
+
+            canvasCtx.clearRect(0, 0, WIDTH, cheight);
+            canvasCtx.fillStyle = bgColor;
+            canvasCtx.fillRect(0, 0, WIDTH, HEIGHT);
+
+            mirrorCtx.clearRect(0, 0, WIDTH, HEIGHT);
+            mirrorCtx.fillStyle = bgColor;
+
+            var x = 0;
+            var y = barWidth + SPACING;
+
+            var refArray = [];
+            var newArray = [];
+
+            for (var k = 0; k < numBars * 2; k++) {
+              refArray.push(Math.round(Math.pow((Math.exp(k/14)),(2/3))));
+            };
+            
+            refArray = uniq(refArray);
+
+            for (var i = 0; i < refArray.length; i++) {
+              newArray.push(dataArray[refArray[i]]);
+            };
+            
+            for(var i = 0; i < numBars; i++) {
+              var value = newArray[i];
+               if (capYPositionArray.length < Math.round(numBars)) {
+                    capYPositionArray.push(value);
+                };
+                canvasCtx.fillStyle = capStyle;
+                //draw the cap, with transition effect
+                if (value < capYPositionArray[i]) {
+                    canvasCtx.fillRect(x,cheight - (--capYPositionArray[i]), barWidth, capHeight);
+                    canvasCtx.fillRect(y,cheight - (--capYPositionArray[i]), barWidth, capHeight);
+                } else {
+                    canvasCtx.fillRect(x,cheight - value, barWidth, capHeight);
+                    canvasCtx.fillRect(y,cheight - value, barWidth, capHeight);
+                    capYPositionArray[i] = value;
+                };
+
+              var magnitude = 0;
+              var offset = Math.floor( i * multiplier );
+                for (var j = 0; j< multiplier; j++)
+                    magnitude += newArray[offset + j];
+                magnitude = magnitude / multiplier;
+                var magnitude2 = newArray[i * multiplier];
+
+              canvasCtx.fillStyle = gradient;
+              canvasCtx.fillRect(x,cheight,barWidth,-magnitude);
+              canvasCtx.fillRect(y,cheight,barWidth,-magnitude);
+
+              x += (barWidth + SPACING)*2;
+              y += (barWidth + SPACING)*2;
+
+            }
+            mirrorCtx.clearRect(0, 0, mWIDTH, HEIGHT);
+            mirrorCtx.drawImage(canvas, 0, -100, mWIDTH, HEIGHT);
+          };
+          draw();
+          
+        } 
+
+      }
+      
+    </script>
+    
+</body>
+</html>
